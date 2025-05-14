@@ -11,7 +11,7 @@ downloads/
 eggs/
 .eggs/
 lib/
-/lib64/
+/lib64
 parts/
 sdist/
 var/
@@ -19,7 +19,7 @@ wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-/pvvenv.cfg
+/pyvenv.cfg
 bin/
 include/
 
@@ -55,4 +55,5 @@ cloudfunction/projects/*/
 cloudfunction/projects/*/logs/
 cloudfunction/projects/*/.env
 cloudfunction/projects/*/__pycache__/
-cloudfunction/projects/*/*.pyc 
+cloudfunction/projects/*/*.pyc /lib64
+/pyvenv.cfg
