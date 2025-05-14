@@ -1,0 +1,67 @@
+version: 1
+disable_existing_loggers: false
+
+formatters:
+  standard:
+    format: '%(asctime)s [%(levelname)s] %(name)s: %(message)s'
+  json:
+    class: cloudfunction.utils.logger.JSONFormatter
+
+handlers:
+  console:
+    class: logging.StreamHandler
+    formatter: standard
+    stream: ext://sys.stdout
+  
+  server:
+    class: logging.handlers.RotatingFileHandler
+    formatter: standard
+    filename: cloudfunction/logs/server.log
+    maxBytes: 10485760  # 10MB
+    backupCount: 5
+    encoding: utf-8
+  
+  error:
+    class: logging.handlers.RotatingFileHandler
+    formatter: standard
+    filename: cloudfunction/logs/error.log
+    maxBytes: 10485760  # 10MB
+    backupCount: 5
+    encoding: utf-8
+    level: ERROR
+  
+  project_log_template:
+    class: logging.handlers.RotatingFileHandler
+    formatter: standard
+    filename: cloudfunction/logs/projects/{project_name}/app.log
+    maxBytes: 10485760  # 10MB
+    backupCount: 5
+    encoding: utf-8
+  
+  project_error_template:
+    class: logging.handlers.RotatingFileHandler
+    formatter: standard
+    filename: cloudfunction/logs/projects/{project_name}/error.log
+    maxBytes: 10485760  # 10MB
+    backupCount: 5
+    encoding: utf-8
+    level: ERROR
+  
+  project_json_template:
+    class: logging.handlers.RotatingFileHandler
+    formatter: json
+    filename: cloudfunction/logs/projects/{project_name}/json.log
+    maxBytes: 10485760  # 10MB
+    backupCount: 5
+    encoding: utf-8
+
+loggers:
+  root:
+    level: INFO
+    handlers: [console, server, error]
+    propagate: false
+  
+  cloudfunction.projects:
+    level: INFO
+    handlers: [project_log_template, project_error_template, project_json_template]
+    propagate: false 
