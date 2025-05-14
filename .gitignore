@@ -22,7 +22,6 @@ wheels/
 pvvenv.cfg
 bin/
 include/
-pyvenv.cfg
 
 # 虚拟环境
 venv/
