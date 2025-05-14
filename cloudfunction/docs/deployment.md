@@ -3,7 +3,6 @@
 ## 环境要求
 - Python 3.8+
 - pip 包管理器
-- 操作系统：支持 Windows 和 Unix-like 系统
 
 ## 部署步骤
 
