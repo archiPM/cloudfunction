@@ -42,7 +42,10 @@ logs/
 
 # 环境变量
 .env
-.env.*
+
+# 但不忽略模板文件
+!.env.template
+!.env.example
 
 # 系统文件
 .DS_Store
@@ -55,5 +58,4 @@ cloudfunction/projects/*/
 cloudfunction/projects/*/logs/
 cloudfunction/projects/*/.env
 cloudfunction/projects/*/__pycache__/
-cloudfunction/projects/*/*.pyc /lib64
-/pyvenv.cfg
+cloudfunction/projects/*/*.pyc
