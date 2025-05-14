@@ -63,8 +63,8 @@ project/                           # 项目根目录
 ```
 
 ## 详细文档
-- [架构说明](docs/architecture.md)：系统架构、进程结构、环境管理等
-- [API 文档](docs/api.md)：接口说明、请求/响应格式等
-- [开发指南](docs/development.md)：函数开发、数据库操作、LLM 集成等
-- [部署指南](docs/deployment.md)：项目部署、配置管理、日志管理等
+- [架构说明](cloudfunction/docs/architecture.md)：系统架构、进程结构、环境管理等
+- [API 文档](cloudfunction/docs/api.md)：接口说明、请求/响应格式等
+- [开发指南](cloudfunction/docs/development.md)：函数开发、数据库操作、LLM 集成等
+- [部署指南](cloudfunction/docs/deployment.md)：项目部署、配置管理、日志管理等
 
