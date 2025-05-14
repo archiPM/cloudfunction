@@ -60,18 +60,18 @@ pandas==2.1.0
 ```
 
 ### 4. 测试函数
-1. 部署函数：
+1. 启动服务：
+```bash
+python -m cloudfunction.core.master
+```
+
+2. 部署函数：
 ```bash
 # 部署函数
 curl -X POST http://localhost:8080/api/v1/functions/your_project/hello/deploy
 
 # 查看已部署的函数列表
 curl http://localhost:8080/api/v1/functions/your_project/list
-```
-
-2. 启动服务：
-```bash
-python -m cloudfunction.core.master
 ```
 
 3. 调用函数：
