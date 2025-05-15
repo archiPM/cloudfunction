@@ -29,7 +29,8 @@ class DeepseekClient(BaseLLMClient):
         # 模型上下文窗口映射
         window_sizes = {
             "deepseek-r1-250120": 65536,                 # 64k token
-            "deepseek-r1-distill-qwen-32b-250120": 32768 # 新增: 32k token (蒸馏版)
+            "deepseek-r1-distill-qwen-32b-250120": 32768, # 新增: 32k token (蒸馏版)
+            "deepseek-v3-250324": 131072                 # 128k token (V3版本)
         }
         
         return window_sizes.get(model, 32768)  # 默认返回32k
