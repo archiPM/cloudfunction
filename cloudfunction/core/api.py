@@ -23,17 +23,34 @@ async def health_check():
     """健康检查"""
     return {"status": "healthy"}
 
-def get_project_files(project_name: str) -> Dict[str, List[bytes]]:
-    """自动查找项目目录下的必要文件"""
+def get_project_files(project_name: str, function_name: str = None) -> Dict[str, List[bytes]]:
+    """
+    自动查找项目目录下的必要文件
+    
+    Args:
+        project_name: 项目名称
+        function_name: 可选的函数名称，如果提供则只返回该函数的文件
+        
+    Returns:
+        包含代码文件和依赖文件内容的字典
+    """
     project_path = f"cloudfunction/projects/{project_name}"
     code_files = []
     requirements_file = os.path.join(project_path, "requirements.txt")
     
-    # 查找所有 .py 文件
-    for file in os.listdir(project_path):
-        if file.endswith(".py"):
-            with open(os.path.join(project_path, file), 'rb') as f:
-                code_files.append(f.read())
+    if function_name:
+        # 如果指定了函数名，只查找该函数的文件
+        function_file = os.path.join(project_path, f"{function_name}.py")
+        if not os.path.exists(function_file):
+            raise FileNotFoundError(f"函数文件 {function_file} 不存在")
+        with open(function_file, 'rb') as f:
+            code_files.append(f.read())
+    else:
+        # 否则查找所有 .py 文件
+        for file in os.listdir(project_path):
+            if file.endswith(".py"):
+                with open(os.path.join(project_path, file), 'rb') as f:
+                    code_files.append(f.read())
     
     if not code_files:
         raise FileNotFoundError(f"项目 {project_name} 中没有找到 .py 文件")
@@ -55,8 +72,8 @@ async def deploy_project(project_name: str, request: Request):
     """
     logger.info(f"收到项目部署请求: project={project_name}")
     try:
-        # 自动查找项目文件
-        project_files = get_project_files(project_name)
+        # 验证项目文件存在性（不指定function_name，将检查所有.py文件）
+        get_project_files(project_name)
         
         # 获取执行器
         executor = request.app.state.get_executor(project_name)
@@ -86,8 +103,8 @@ async def deploy_function(
     """
     logger.info(f"收到函数部署请求: project={project_name}, function={function_name}")
     try:
-        # 自动查找项目文件
-        project_files = get_project_files(project_name)
+        # 自动查找特定函数文件
+        project_files = get_project_files(project_name, function_name)
         
         # 获取执行器
         executor = request.app.state.get_executor(project_name)
@@ -96,7 +113,7 @@ async def deploy_function(
         # 部署特定函数
         result = await executor.deploy_function(
             function_name=function_name,
-            code=project_files["code_files"][0],  # 使用第一个文件的字节内容
+            code=project_files["code_files"][0],  # 使用函数对应的文件内容
             requirements=project_files["requirements"]
         )
         logger.info(f"函数部署成功: {result}")
