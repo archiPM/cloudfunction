@@ -357,4 +357,30 @@ class FunctionExecutor:
             
         except Exception as e:
             logger.error(f"函数删除失败: {str(e)}")
-            raise 
+            raise
+
+    async def deploy_project(self, project_name: str) -> Dict[str, Any]:
+        """部署整个项目
+        
+        Args:
+            project_name: 项目名称
+            
+        Returns:
+            部署结果
+        """
+        logger.info(f"收到项目部署请求，将转发到registry: {project_name}")
+        try:
+            # 调用registry的方法
+            result = await self.registry.deploy_project(project_name)
+            
+            return {
+                "status": "success",
+                "message": f"Project {project_name} deployed successfully",
+                "details": result
+            }
+        except Exception as e:
+            logger.error(f"项目部署失败: {str(e)}")
+            return {
+                "status": "error",
+                "error": str(e)
+            } 

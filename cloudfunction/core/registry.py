@@ -159,7 +159,7 @@ class FunctionRegistry:
             self._create_venv(project_name)
             
             # 动态加载项目
-            await self.load_project(project_name)
+            self._load_project_functions(project_name)
             
             # 安装项目依赖
             self._install_requirements(project_name)

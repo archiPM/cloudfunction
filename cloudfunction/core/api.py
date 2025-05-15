@@ -45,7 +45,7 @@ def get_project_files(project_name: str) -> Dict[str, List[bytes]]:
         "requirements": open(requirements_file, 'rb').read()
     }
 
-@router.post("/api/v1/functions/{project_name}/deploy")
+@router.post("/api/v1/projects/{project_name}/deploy")
 async def deploy_project(project_name: str, request: Request):
     """部署整个项目
     
