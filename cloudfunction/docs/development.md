@@ -3,28 +3,29 @@
 ## 快速开始
 
 ### 1. 创建函数
-在 `projects/your_project/functions` 目录下创建你的函数文件，例如 `hello.py`：
+在 `cloudfunction/projects/your_project/` 目录下创建你的函数文件，例如 `hello.py`：
 
 ```python
 import logging
 from typing import Dict, Any
+from cloudfunction.utils.logger import get_project_logger
 
 # 配置日志
-logger = logging.getLogger(__name__)
+logger = get_project_logger('your_project')
 
-async def main(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def main(event: Dict[str, Any]) -> Dict[str, Any]:
     """
-    函数入口点
+    入口函数
     
-    参数:
-        payload: 函数输入参数，例如 {"name": "张三"}
+    Args:
+        event: 输入事件数据，例如 {"name": "张三"}
     
-    返回:
-        处理结果，例如 {"status": "success", "result": {"message": "你好，张三"}}
+    Returns:
+        Dict[str, Any]: 处理结果，例如 {"status": "success", "result": {"message": "你好，张三"}}
     """
     try:
         # 获取输入参数
-        name = payload.get("name", "世界")
+        name = event.get("name", "世界")
         
         # 返回结果
         return {
@@ -44,7 +45,7 @@ async def main(payload: Dict[str, Any]) -> Dict[str, Any]:
 ```
 
 ### 2. 配置环境
-在 `projects/your_project` 目录下创建 `.env` 文件，配置你的环境变量：
+在 `cloudfunction/projects/your_project/` 目录下创建 `.env` 文件，配置你的环境变量：
 
 ```ini
 # 你的环境变量
@@ -52,7 +53,7 @@ API_KEY=your_api_key
 ```
 
 ### 3. 安装依赖
-在 `projects/your_project` 目录下创建 `requirements.txt` 文件，添加你需要的包：
+在 `cloudfunction/projects/your_project/` 目录下创建 `requirements.txt` 文件，添加你需要的包：
 
 ```txt
 requests==2.31.0
@@ -71,7 +72,7 @@ python -m cloudfunction.core.master
 curl -X POST http://localhost:8080/api/v1/functions/your_project/hello/deploy
 
 # 查看已部署的函数列表
-curl http://localhost:8080/api/v1/functions/your_project/list
+curl http://localhost:8080/api/v1/functions/your_project
 ```
 
 3. 调用函数：
@@ -86,16 +87,25 @@ curl -X POST http://localhost:8080/api/v1/functions/your_project/hello/invoke \
 ### 1. 函数编写
 - 必须包含 `main` 函数作为入口点
 - 支持异步（`async def main`）和同步（`def main`）函数
-- 函数参数必须是 `Dict[str, Any]` 类型
+- 函数参数必须是 `Dict[str, Any]` 类型，命名为 `event`
 - 返回值必须是 `Dict[str, Any]` 类型
 - 必须处理异常并返回标准格式的结果
 
 ### 2. 错误处理
 ```python
-async def main(payload: Dict[str, Any]) -> Dict[str, Any]:
+async def main(event: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    入口函数
+    
+    Args:
+        event: 输入事件数据
+        
+    Returns:
+        Dict[str, Any]: 处理结果
+    """
     try:
         # 你的代码
-        result = await process_data(payload)
+        result = await process_data(event)
         return {
             "status": "success",
             "result": result
@@ -113,9 +123,10 @@ async def main(payload: Dict[str, Any]) -> Dict[str, Any]:
 ### 3. 日志记录
 ```python
 import logging
+from cloudfunction.utils.logger import get_project_logger
 
 # 配置日志
-logger = logging.getLogger(__name__)
+logger = get_project_logger('your_project')
 
 # 记录日志
 logger.info("开始处理")
