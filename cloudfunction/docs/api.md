@@ -32,27 +32,7 @@ GET /status
 
 ## 项目管理接口
 
-### 1. 启动项目
-```bash
-POST /api/v1/projects/{project_name}/start
-```
-- 功能：启动指定项目
-- 参数：
-  - `project_name`: 项目名称
-- 响应：
-  ```json
-  {
-    "status": "success",
-    "message": "项目启动成功",
-    "project": {
-      "name": "project_name",
-      "status": "running",
-      "start_time": "2024-03-21T10:00:00Z"
-    }
-  }
-  ```
-
-### 2. 停止项目
+### 1. 停止项目
 ```bash
 POST /api/v1/projects/{project_name}/stop
 ```
@@ -72,7 +52,7 @@ POST /api/v1/projects/{project_name}/stop
   }
   ```
 
-### 3. 获取项目列表
+### 2. 获取项目列表
 ```bash
 GET /api/v1/projects
 ```
@@ -93,7 +73,7 @@ GET /api/v1/projects
   }
   ```
 
-### 4. 获取项目详情
+### 3. 获取项目详情
 ```bash
 GET /api/v1/projects/{project_name}
 ```

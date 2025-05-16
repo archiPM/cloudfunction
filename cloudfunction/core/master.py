@@ -2,7 +2,8 @@ import asyncio
 import logging
 import os
 from multiprocessing import Process, Queue, Event
-from typing import Dict, Any
+from typing import Dict, Any, Optional
+import signal
 
 # 基础配置
 from cloudfunction.config.server import HOST, PORT
@@ -67,6 +68,9 @@ class Master:
                 if not queue.empty():
                     message = queue.get()
                     if message == "stop":
+                        logger.info(f"收到停止信号，正在停止项目 {project_name}")
+                        # 发送 SIGTERM 信号
+                        os.kill(os.getpid(), signal.SIGTERM)
                         break
                     elif isinstance(message, dict):
                         if message.get("type") == "execute":
@@ -89,18 +93,36 @@ class Master:
             logger.warning(f"Project {project_name} is not running")
             return
 
-        # 发送停止消息
-        self.project_queues[project_name].put("stop")
-        
-        # 等待进程结束
-        self.project_processes[project_name].join()
-        
-        # 清理资源
-        del self.project_processes[project_name]
-        del self.project_queues[project_name]
-        del self.project_events[project_name]
-        
-        logger.info(f"Stopped project process for {project_name}")
+        try:
+            # 发送停止消息
+            self.project_queues[project_name].put("stop")
+            
+            # 等待进程结束，设置超时
+            self.project_processes[project_name].join(timeout=10)
+            
+            # 如果进程还在运行，强制终止
+            if self.project_processes[project_name].is_alive():
+                logger.warning(f"Project {project_name} did not stop gracefully, forcing termination")
+                self.project_processes[project_name].terminate()
+                self.project_processes[project_name].join(timeout=5)
+            
+            # 清理资源
+            del self.project_processes[project_name]
+            del self.project_queues[project_name]
+            del self.project_events[project_name]
+            
+            logger.info(f"Stopped project process for {project_name}")
+            
+        except Exception as e:
+            logger.error(f"Error stopping project {project_name}: {e}")
+            # 确保资源被清理
+            if project_name in self.project_processes:
+                self.project_processes[project_name].terminate()
+                del self.project_processes[project_name]
+            if project_name in self.project_queues:
+                del self.project_queues[project_name]
+            if project_name in self.project_events:
+                del self.project_events[project_name]
 
     async def start(self):
         """启动主进程"""
