@@ -21,4 +21,18 @@ def get_llm_client(provider: str = None):
     }
     return clients.get(provider)
 
-__all__ = ['get_llm_client']
+def get_llm_client_async(provider: str = None):
+    """
+    获取异步LLM客户端实例
+    
+    Args:
+        provider: 提供商名称 ('doubao', 'deepseek', 'minimax')
+                 如果为None，则使用环境变量DEFAULT_LLM_PROVIDER指定的提供商
+    
+    Returns:
+        BaseLLMClient的实例，支持异步调用
+    """
+    # 返回与get_llm_client相同的客户端实例，但可以通过call_api_async方法进行异步调用
+    return get_llm_client(provider)
+
+__all__ = ['get_llm_client', 'get_llm_client_async']
