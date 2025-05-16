@@ -127,33 +127,32 @@ class FunctionExecutor:
                 
                 # 支持 async 和 sync
                 if asyncio.iscoroutinefunction(handler):
+                    # 直接执行异步函数
                     result = await handler(payload)
                 else:
+                    # 同步函数在线程池中执行
                     loop = asyncio.get_event_loop()
                     result = await loop.run_in_executor(self.executor, handler, payload)
                 
-                # 记录执行结果
-                self.running_functions[func_id].update({
-                    'end_time': time.time(),
-                    'status': 'completed',
-                    'result': result
-                })
+                # 更新执行状态
+                self.running_functions[func_id]['status'] = 'completed'
+                self.running_functions[func_id]['end_time'] = time.time()
                 
                 return {
-                    'status': 'success',
-                    'result': result
+                    "status": "success",
+                    "result": result
                 }
                 
         except Exception as e:
-            self.running_functions[func_id].update({
-                'end_time': time.time(),
-                'status': 'failed',
-                'error': str(e)
-            })
+            # 更新执行状态
+            self.running_functions[func_id]['status'] = 'failed'
+            self.running_functions[func_id]['end_time'] = time.time()
+            self.running_functions[func_id]['error'] = str(e)
+            
             logger.error(f"Error executing function {function_name}: {str(e)}")
             return {
-                'status': 'error',
-                'error': str(e)
+                "status": "error",
+                "error": str(e)
             }
 
     def get_function_status(self, func_id: str) -> Optional[Dict[str, Any]]:

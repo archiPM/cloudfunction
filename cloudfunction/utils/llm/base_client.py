@@ -21,6 +21,7 @@ class BaseLLMClient(ABC):
         
         # 初始化客户端
         self._client = None
+        self._async_client = None
     
     @property
     def name(self) -> str:
@@ -32,12 +33,24 @@ class BaseLLMClient(ABC):
         """初始化API客户端，由子类实现"""
         pass
     
+    @abstractmethod
+    def initialize_async_client(self) -> Any:
+        """初始化异步API客户端，由子类实现"""
+        pass
+    
     @property
     def client(self) -> Any:
         """获取API客户端，如果未初始化则先初始化"""
         if self._client is None:
             self._client = self.initialize_client()
         return self._client
+    
+    @property
+    def async_client(self) -> Any:
+        """获取异步API客户端，如果未初始化则先初始化"""
+        if self._async_client is None:
+            self._async_client = self.initialize_async_client()
+        return self._async_client
     
     @abstractmethod
     def get_default_model(self) -> str:
@@ -52,6 +65,24 @@ class BaseLLMClient(ABC):
                 stream: bool = False) -> Any:
         """
         调用LLM API，由子类实现
+        
+        Args:
+            messages: 消息列表
+            model: 模型名称
+            temperature: 温度参数
+            max_tokens: 最大生成token数
+            stream: 是否使用流式响应
+        """
+        pass
+    
+    @abstractmethod
+    async def call_api_async(self, messages: List[Dict[str, str]],
+                           model: Optional[str] = None,
+                           temperature: float = 0.7,
+                           max_tokens: int = 1000,
+                           stream: bool = False) -> Any:
+        """
+        异步调用LLM API，由子类实现
         
         Args:
             messages: 消息列表
@@ -141,6 +172,45 @@ class BaseLLMClient(ABC):
         except Exception as e:
             self.logger.error(f"文本分析失败: {str(e)}")
             raise 
+    
+    async def analyze_text_async(self, text: str,
+                              system_prompt: Optional[str] = None,
+                              model: Optional[str] = None,
+                              temperature: float = 0.3) -> Dict[str, Any]:
+        """
+        异步分析文本并提取信息
+        
+        Args:
+            text: 要分析的文本
+            system_prompt: 系统提示词
+            model: 使用的模型名称
+            temperature: 温度参数
+            
+        Returns:
+            分析结果（JSON）
+        """
+        if system_prompt is None:
+            system_prompt = "你是一个专业的文本分析助手，擅长从文本中提取关键信息。请以JSON格式回复。"
+        
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": text}
+        ]
+        
+        try:
+            response = await self.call_api_async(
+                messages=messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=1500,
+                stream=False
+            )
+            
+            return self.parse_json_response(response)
+            
+        except Exception as e:
+            self.logger.error(f"异步文本分析失败: {str(e)}")
+            raise
 
     def get_model_context_window(self, model: str = None) -> int:
         """

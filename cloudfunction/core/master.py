@@ -58,7 +58,7 @@ class Master:
         """运行项目进程"""
         try:
             # 创建项目实例
-            project = ProjectProcess(project_name)
+            project = ProjectProcess(project_name, queue, event)
             
             # 设置事件，表示进程已准备好
             event.set()
