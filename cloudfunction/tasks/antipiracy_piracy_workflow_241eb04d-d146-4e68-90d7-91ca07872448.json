@@ -1,0 +1,40 @@
+{
+  "task_id": "antipiracy_piracy_workflow_241eb04d-d146-4e68-90d7-91ca07872448",
+  "project_name": "antipiracy",
+  "function_name": "piracy_workflow",
+  "payload": {
+    "test_mode": true
+  },
+  "status": "completed",
+  "created_at": "2025-05-26T11:34:10.007206",
+  "updated_at": "2025-05-26T11:34:27.346761",
+  "result": {
+    "status": "success",
+    "message": "发现 6 个盗版网站",
+    "piracy_sites": [
+      {
+        "domain": "yemu8.com"
+      },
+      {
+        "domain": "3qdu.net"
+      },
+      {
+        "domain": "3qdu.org"
+      },
+      {
+        "domain": "3qdus.com"
+      },
+      {
+        "domain": "92yanqing.com"
+      },
+      {
+        "domain": "paozw.org"
+      }
+    ],
+    "total_time": "17.34秒",
+    "processed_works": 1,
+    "total_works": 1,
+    "test_mode": true
+  },
+  "error": null
+}

@@ -8,6 +8,7 @@ from dotenv import load_dotenv
 import venv
 import sys
 from threading import Lock
+import ast
 from cloudfunction.utils.logger import get_logger
 from cloudfunction.core.env import VENVS_DIR
 
@@ -71,15 +72,31 @@ class FunctionRegistry:
                 logger.info(f"Loaded function {func_name} from project {project_name}")
 
     def _load_function_description(self, func_path: str) -> Dict:
-        """加载函数的描述信息"""
+        """使用 AST 解析函数描述信息"""
         try:
-            spec = importlib.util.spec_from_file_location("temp_module", func_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            return getattr(module, "FUNCTION_DESCRIPTION", {
+            with open(func_path, 'r', encoding='utf-8') as f:
+                tree = ast.parse(f.read())
+            
+            # 查找模块级别的变量赋值
+            for node in ast.walk(tree):
+                if isinstance(node, ast.Assign):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name) and target.id == 'FUNCTION_DESCRIPTION':
+                            if isinstance(node.value, ast.Dict):
+                                # 将 AST Dict 节点转换为实际的字典
+                                description = {}
+                                for key, value in zip(node.value.keys, node.value.values):
+                                    if isinstance(key, ast.Constant):
+                                        key_name = key.value
+                                        if isinstance(value, ast.Constant):
+                                            description[key_name] = value.value
+                                return description
+            
+            # 如果没有找到 FUNCTION_DESCRIPTION，返回默认值
+            return {
                 "name": os.path.basename(func_path),
                 "description": "No description provided"
-            })
+            }
         except Exception as e:
             logger.warning(f"Error loading function description from {func_path}: {e}")
             return {
@@ -139,17 +156,54 @@ class FunctionRegistry:
         """安装项目的依赖"""
         try:
             with self.venv_lock:
-                requirements_path = os.path.join(self.projects_dir, project_name, "requirements.txt")
-                if not os.path.exists(requirements_path):
-                    logger.info(f"No requirements.txt found for project {project_name}")
-                    return True
+                project_dir = os.path.join(self.projects_dir, project_name)
+                requirements_txt = os.path.join(project_dir, "requirements.txt")
+                requirements_lock = os.path.join(project_dir, "requirements.lock")
                 
                 pip_path = self._get_venv_pip(project_name)
-                logger.info(f"Installing requirements for project {project_name}")
-                subprocess.run([pip_path, "install", "-r", requirements_path], check=True)
+                
+                # 检查文件是否存在
+                txt_exists = os.path.exists(requirements_txt)
+                lock_exists = os.path.exists(requirements_lock)
+                
+                # 如果两个文件都不存在，直接返回
+                if not txt_exists and not lock_exists:
+                    logger.info(f"未找到依赖文件：项目 {project_name} 没有 requirements.txt 或 requirements.lock")
+                    return True
+                
+                # 检查txt文件是否比lock文件更新
+                if txt_exists and lock_exists:
+                    txt_mtime = os.path.getmtime(requirements_txt)
+                    lock_mtime = os.path.getmtime(requirements_lock)
+                    
+                    if txt_mtime > lock_mtime:
+                        logger.info(f"检测到 requirements.txt 更新，重新生成 lock 文件")
+                        try:
+                            # 检查是否安装了pip-compile
+                            pip_compile_path = os.path.join(os.path.dirname(pip_path), "pip-compile")
+                            if not os.path.exists(pip_compile_path):
+                                logger.info("安装 pip-tools 用于生成 lock 文件")
+                                subprocess.run([pip_path, "install", "pip-tools"], check=True)
+                                pip_compile_path = os.path.join(os.path.dirname(pip_path), "pip-compile")
+                            
+                            # 重新生成lock文件
+                            subprocess.run([pip_compile_path, requirements_txt, "--output-file", requirements_lock], check=True)
+                            logger.info(f"成功更新 requirements.lock 文件")
+                        except Exception as e:
+                            logger.error(f"更新 lock 文件失败: {e}")
+                            # 更新失败不影响后续安装
+                
+                # 安装依赖
+                if lock_exists:
+                    logger.info(f"从 requirements.lock 安装依赖: {project_name}")
+                    subprocess.run([pip_path, "install", "-r", requirements_lock], check=True)
+                elif txt_exists:
+                    logger.info(f"从 requirements.txt 安装依赖: {project_name}")
+                    subprocess.run([pip_path, "install", "-r", requirements_txt], check=True)
+                
                 return True
         except Exception as e:
-            logger.error(f"Error installing requirements for project {project_name}: {e}")
+            logger.error(f"安装项目 {project_name} 依赖时出错: {e}")
             return False
 
     async def deploy_project(self, project_name: str) -> bool:
@@ -157,20 +211,27 @@ class FunctionRegistry:
         try:
             # 创建或更新虚拟环境
             self._create_venv(project_name)
-            
             # 动态加载项目
             self._load_project_functions(project_name)
-            
             # 安装项目依赖
-            self._install_requirements(project_name)
-
+            logger.info(f"安装项目依赖...")
+            install_success = self._install_requirements(project_name)
+            if not install_success:
+                logger.warning(f"安装依赖过程中出现警告，但将继续部署")
             # 重新加载所有函数
             for func_name in list(self.projects[project_name]["functions"].keys()):
                 await self.deploy_function(project_name, func_name)
-
             logger.info(f"Project {project_name} deployed successfully")
+            # 部署后重启项目进程，确保新代码生效
+            try:
+                from cloudfunction.core.state import ServerState
+                state = ServerState()
+                state.terminate_process(project_name)
+                state.start_project_process(project_name, None)
+                logger.info(f"项目进程已重启: {project_name}")
+            except Exception as e:
+                logger.error(f"重启项目进程失败: {project_name} - {str(e)}")
             return True
-            
         except Exception as e:
             logger.error(f"Error deploying project {project_name}: {e}", exc_info=True)
             raise
@@ -178,33 +239,40 @@ class FunctionRegistry:
     async def deploy_function(self, project_name: str, function_name: str) -> bool:
         """部署或更新函数"""
         if project_name not in self.projects:
+            logger.error(f"项目未找到: {project_name}")
             raise ValueError(f"Project {project_name} does not exist")
-
         project_path = self.projects[project_name]["path"]
         func_path = os.path.join(project_path, f"{function_name}.py")
-        
+        logger.info(f"部署函数: {project_name}/{function_name}，文件路径: {func_path}")
         if not os.path.exists(func_path):
+            logger.error(f"函数文件不存在: {func_path}")
             raise ValueError(f"Function {function_name}.py does not exist in project {project_name}")
-
-        # 验证函数文件
-        try:
-            spec = importlib.util.spec_from_file_location("temp_module", func_path)
-            module = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(module)
-            if not hasattr(module, "main"):
-                raise ValueError(f"No main function found in {function_name}.py")
-        except Exception as e:
-            raise ValueError(f"Error validating function {function_name}: {e}")
-
-        # 更新注册表
+        # 首先安装项目依赖
+        if not self._install_requirements(project_name):
+            logger.error(f"项目 {project_name} 依赖安装失败")
+            raise RuntimeError(f"Failed to install dependencies for project {project_name}")
+        # 更新函数注册信息
+        self.registry[(project_name, function_name)] = {
+            "file_path": func_path,
+            "entry": "main"  # 默认入口名，可扩展
+        }
+        # 更新项目函数信息
         description = self._load_function_description(func_path)
         self.projects[project_name]["functions"][function_name] = {
             "path": func_path,
             "status": "deployed",
             "description": description
         }
-
-        logger.info(f"Function {function_name} in project {project_name} deployed successfully")
+        logger.info(f"函数 {function_name} 部署成功")
+        # 部署后重启项目进程，确保新代码生效
+        try:
+            from cloudfunction.core.state import ServerState
+            state = ServerState()
+            state.terminate_process(project_name)
+            state.start_project_process(project_name, None)
+            logger.info(f"项目进程已重启: {project_name}")
+        except Exception as e:
+            logger.error(f"重启项目进程失败: {project_name} - {str(e)}")
         return True
 
     def exists(self, project_name: str, function_name: str) -> bool:

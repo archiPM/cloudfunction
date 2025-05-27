@@ -20,12 +20,13 @@ logger = get_logger(__name__)
 class FunctionExecutor:
     """函数执行器"""
     
-    def __init__(self, project_name: str, registry):
+    def __init__(self, project_name: str, registry, state=None):
         """初始化函数执行器
         
         Args:
             project_name: 项目名称
             registry: FunctionRegistry 实例
+            state: ServerState 实例，可选
         """
         logger.info(f"初始化函数执行器: project={project_name}")
         self.project_name = project_name
@@ -36,6 +37,7 @@ class FunctionExecutor:
         self.running_functions = {}
         self.semaphore = asyncio.Semaphore(10)  # 限制并发执行数量
         self.registry = registry
+        self.state = state
         
         # 确保项目虚拟环境存在
         self._ensure_venv()
@@ -107,41 +109,32 @@ class FunctionExecutor:
                     'function': function_name
                 }
                 
-                # 加载环境变量
-                env = self.env_manager.get_project_env(self.project_name)
+                logger.info(f"执行函数: {self.project_name}/{function_name}")
                 
-                # 通过注册表查找函数文件路径和入口名
-                func_info = self.registry.get_function(self.project_name, function_name)
-                if not func_info:
-                    raise Exception(f"Function {function_name} not found in project {self.project_name}")
-                file_path = func_info["file_path"]
-                entry = func_info.get("entry", "main")
+                # 从状态管理器获取主进程实例
+                if not self.state:
+                    raise Exception("状态管理器未初始化")
+                    
+                master = self.state.get_master()
+                if not master:
+                    raise Exception("无法获取主进程实例")
                 
-                # 动态加载模块
-                spec = importlib.util.spec_from_file_location(function_name, file_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                handler = getattr(module, entry, None)
-                if handler is None:
-                    raise Exception(f"No entry function '{entry}' found in {file_path}")
-                
-                # 支持 async 和 sync
-                if asyncio.iscoroutinefunction(handler):
-                    # 直接执行异步函数
-                    result = await handler(payload)
-                else:
-                    # 同步函数在线程池中执行
-                    loop = asyncio.get_event_loop()
-                    result = await loop.run_in_executor(self.executor, handler, payload)
-                
-                # 更新执行状态
-                self.running_functions[func_id]['status'] = 'completed'
-                self.running_functions[func_id]['end_time'] = time.time()
-                
-                return {
-                    "status": "success",
-                    "result": result
-                }
+                # 委托给项目进程执行函数
+                try:
+                    result = await master.execute_function(self.project_name, function_name, payload)
+                    
+                    # 更新执行状态
+                    self.running_functions[func_id]['status'] = 'completed'
+                    self.running_functions[func_id]['end_time'] = time.time()
+                    logger.info(f"函数执行完成: {function_name}")
+                    
+                    return {
+                        "status": "success",
+                        "result": result
+                    }
+                except Exception as e:
+                    logger.error(f"项目进程执行函数失败: {str(e)}")
+                    raise
                 
         except Exception as e:
             # 更新执行状态
@@ -187,16 +180,16 @@ class FunctionExecutor:
             if not code or len(code.strip()) == 0:
                 raise ValueError("函数代码不能为空")
             
-            # 验证代码格式
+            # 验证代码格式和main函数
             try:
                 code_str = code.decode('utf-8')
-                compile(code_str, '<string>', 'exec')
+                compile(code_str, '<string>', 'exec')  # 基本语法检查
+                
+                # 简单检查是否包含main函数定义
+                if "def main(" not in code_str and "async def main(" not in code_str:
+                    raise ValueError("函数代码必须包含main函数")
             except (UnicodeDecodeError, SyntaxError) as e:
                 raise ValueError(f"函数代码格式无效: {str(e)}")
-            
-            # 验证main函数
-            if "async def main" not in code_str and "def main" not in code_str:
-                raise ValueError("函数代码必须包含main函数")
             
             # 备份现有文件
             code_path = f"cloudfunction/projects/{self.project_name}/{function_name}.py"
@@ -232,34 +225,6 @@ class FunctionExecutor:
                         shutil.copy2(backup_path, code_path)
                     raise ValueError(f"安装项目依赖失败: {str(e)}")
             
-            # 验证新文件
-            try:
-                # 重新加载模块
-                import importlib
-                import sys
-                module_name = f"cloudfunction.projects.{self.project_name}.{function_name}"
-                if module_name in sys.modules:
-                    del sys.modules[module_name]
-                
-                # 将项目目录添加到 Python 路径
-                project_dir = os.path.dirname(os.path.dirname(code_path))
-                if project_dir not in sys.path:
-                    sys.path.insert(0, project_dir)
-                
-                # 使用虚拟环境的Python解释器
-                python_path = self._get_venv_python()
-                spec = importlib.util.spec_from_file_location(module_name, code_path)
-                module = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(module)
-                if not hasattr(module, "main"):
-                    raise ValueError(f"函数代码中未找到main函数")
-            except Exception as e:
-                # 如果验证失败，恢复备份
-                if os.path.exists(backup_path):
-                    logger.debug(f"恢复备份文件: {backup_path} -> {code_path}")
-                    shutil.copy2(backup_path, code_path)
-                raise ValueError(f"函数代码验证失败: {str(e)}")
-            
             # 删除备份文件
             if os.path.exists(backup_path):
                 os.remove(backup_path)
@@ -283,20 +248,13 @@ class FunctionExecutor:
     async def invoke_function(self, function_name: str, data: Dict[str, Any]) -> Dict[str, Any]:
         logger.info(f"开始调用函数: {function_name}")
         try:
-            # 导入函数模块
-            module_path = f"cloudfunction.projects.{self.project_name}.{function_name}"
-            logger.debug(f"导入函数模块: {module_path}")
-            
-            import importlib
-            module = importlib.import_module(module_path)
-            handler = getattr(module, "main")
-            
-            # 执行函数
-            logger.debug(f"执行函数,输入数据: {data}")
-            if asyncio.iscoroutinefunction(handler):
-                result = await handler(data)
-            else:
-                result = handler(data)
+            # 获取项目进程
+            project = self.registry.get_project(self.project_name)
+            if not project:
+                raise ValueError(f"Project {self.project_name} not found")
+                
+            # 通过项目进程执行函数
+            result = await project.execute_function_async(function_name, data)
             logger.info(f"函数执行完成: {function_name}")
             
             return {
@@ -369,6 +327,11 @@ class FunctionExecutor:
         """
         logger.info(f"收到项目部署请求，将转发到registry: {project_name}")
         try:
+            # 检查 registry 是否存在
+            logger.debug(f"当前registry实例: {self.registry}")
+            if not self.registry:
+                raise RuntimeError("Registry not initialized")
+                
             # 调用registry的方法
             result = await self.registry.deploy_project(project_name)
             

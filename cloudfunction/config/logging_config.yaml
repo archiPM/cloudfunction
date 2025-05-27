@@ -1,5 +1,5 @@
 version: 1
-disable_existing_loggers: false
+disable_existing_loggers: true
 
 formatters:
   standard:
@@ -57,6 +57,11 @@ handlers:
 
 loggers:
   root:
+    level: INFO
+    handlers: [console, server, error]
+    propagate: false
+  
+  cloudfunction:
     level: INFO
     handlers: [console, server, error]
     propagate: false

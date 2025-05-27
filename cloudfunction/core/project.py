@@ -13,6 +13,9 @@ from cloudfunction.utils.logger import get_logger
 import multiprocessing
 import psutil
 import concurrent.futures
+import time
+import signal
+from multiprocessing import Process, Queue, Event
 
 # 设置日志
 logger = get_logger(__name__)
@@ -21,45 +24,64 @@ class ProjectProcess:
     """项目处理类"""
     
     def __init__(self, name: str, queue: multiprocessing.Queue, event: multiprocessing.Event):
-        """初始化项目处理类
+        """初始化项目进程
         
         Args:
             name: 项目名称
             queue: 进程间通信队列
-            event: 进程间事件
+            event: 进程间通信事件
         """
         self.name = name
         self.queue = queue
         self.event = event
         self.function_registry = {}
-        self.executor = concurrent.futures.ThreadPoolExecutor(
-            max_workers=10,
-            thread_name_prefix=f"cloudfunction-{name}"
-        )
-        self.loop = None  # 事件循环
-        
-        # 初始化环境管理器
-        self.env_manager = EnvManager()
+        self.executor = concurrent.futures.ThreadPoolExecutor(max_workers=2)
+        self.initialized = False
+        self.env_manager = EnvManager()  # 初始化环境管理器
         
         # 设置项目目录
         self.project_dir = os.path.join(PROJECTS_DIR, name)
+        if not os.path.exists(self.project_dir):
+            raise ValueError(f"Project directory not found: {self.project_dir}")
+            
+        # 设置虚拟环境目录
         self.venv_dir = os.path.join(VENVS_DIR, name)
         
-        # 检查项目目录是否存在
-        if not os.path.exists(self.project_dir):
-            raise FileNotFoundError(f"Project directory {self.project_dir} does not exist")
-        
-        # 添加项目目录到Python路径
-        if self.project_dir not in sys.path:
-            sys.path.append(self.project_dir)
-        
-        # 创建虚拟环境
-        self._create_venv()
-        
-        # 安装依赖
-        self._install_requirements()
-        
-        self._load_functions()
+        try:
+            # 1. 先创建虚拟环境
+            self._create_venv()
+            
+            # 2. 安装依赖
+            if not self._install_requirements():
+                logger.error(f"项目 {name} 依赖安装失败")
+                raise RuntimeError(f"Failed to install dependencies for project {name}")
+                
+            # 3. 添加虚拟环境路径到sys.path
+            if sys.platform == "win32":
+                venv_site_packages = os.path.join(self.venv_dir, "Lib", "site-packages")
+            else:
+                python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+                venv_site_packages = os.path.join(self.venv_dir, "lib", python_version, "site-packages")
+            
+            if os.path.exists(venv_site_packages):
+                if venv_site_packages not in sys.path:
+                    sys.path.insert(0, venv_site_packages)
+                    logger.info(f"已添加虚拟环境路径到sys.path: {venv_site_packages}")
+            else:
+                logger.error(f"虚拟环境site-packages路径不存在: {venv_site_packages}")
+                raise RuntimeError(f"Virtual environment site-packages not found: {venv_site_packages}")
+            
+            # 4. 最后加载函数
+            self._register_functions()
+            self._load_functions()
+            
+            self.initialized = True
+            logger.info(f"项目 {name} 初始化成功")
+            
+        except Exception as e:
+            logger.error(f"项目 {name} 初始化失败: {str(e)}", exc_info=True)
+            self.initialized = False
+            raise
 
     def _get_venv_python(self) -> str:
         """获取项目的虚拟环境 Python 解释器路径"""
@@ -106,6 +128,10 @@ class ProjectProcess:
             if os.path.exists(project_requirements_path):
                 with open(project_requirements_path, "r") as f:
                     project_requirements = [line.strip() for line in f if line.strip() and not line.startswith("#")]
+                
+                logger.info(f"项目 {self.name} 依赖项: {project_requirements}")
+            else:
+                logger.warning(f"项目 {self.name} 没有找到依赖文件: {project_requirements_path}")
             
             # 合并依赖，项目级覆盖系统级
             all_requirements = []
@@ -127,6 +153,8 @@ class ProjectProcess:
                 logger.info(f"No requirements to install for project {self.name}")
                 return True
             
+            logger.info(f"准备安装依赖: {all_requirements}")
+            
             # 创建临时requirements文件
             temp_requirements_path = os.path.join(self.project_dir, "_temp_requirements.txt")
             with open(temp_requirements_path, "w") as f:
@@ -134,7 +162,22 @@ class ProjectProcess:
             
             try:
                 # 使用项目级虚拟环境的pip安装依赖
-                pip_cmd = [self.env_manager.get_venv_pip(self.name), "install", "-r", temp_requirements_path]
+                pip_path = self.env_manager.get_venv_pip(self.name)
+                logger.info(f"使用pip路径: {pip_path}")
+                
+                # 先尝试升级pip
+                upgrade_result = subprocess.run(
+                    [pip_path, "install", "--upgrade", "pip"],
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
+                if upgrade_result.returncode != 0:
+                    logger.warning(f"Pip升级失败 (忽略): {upgrade_result.stderr}")
+                
+                # 安装依赖
+                pip_cmd = [pip_path, "install", "-r", temp_requirements_path]
+                logger.info(f"执行安装命令: {' '.join(pip_cmd)}")
                 
                 result = subprocess.run(
                     pip_cmd,
@@ -144,12 +187,13 @@ class ProjectProcess:
                 )
                 
                 if result.returncode != 0:
-                    logger.error(f"Error installing dependencies: {result.stderr}")
-                    return False
+                    error_msg = f"依赖安装失败，返回码: {result.returncode}, 错误: {result.stderr}"
+                    logger.error(error_msg)
+                    raise RuntimeError(error_msg)
                 
                 # 记录安装的依赖版本
                 freeze_result = subprocess.run(
-                    [self.env_manager.get_venv_pip(self.name), "freeze"],
+                    [pip_path, "freeze"],
                     capture_output=True,
                     text=True,
                     check=True
@@ -159,7 +203,7 @@ class ProjectProcess:
                 with open(os.path.join(self.project_dir, "requirements.lock"), "w") as f:
                     f.write(freeze_result.stdout)
                 
-                logger.info(f"Dependencies installed successfully for project {self.name}")
+                logger.info(f"依赖安装成功: {self.name}")
                 return True
                 
             finally:
@@ -168,41 +212,111 @@ class ProjectProcess:
                     os.remove(temp_requirements_path)
             
         except Exception as e:
-            logger.error(f"Error installing requirements: {str(e)}")
-            return False
+            logger.error(f"依赖安装失败: {str(e)}", exc_info=True)
+            # 将布尔返回值改为抛出异常，确保问题不被忽略
+            raise RuntimeError(f"依赖安装失败: {str(e)}")
 
-    def _load_functions(self):
-        """加载项目函数"""
+    def _register_functions(self):
+        """注册项目函数（不导入）"""
+        # 扫描项目目录中的Python文件
+        functions_registered = 0
+        logger.info(f"扫描项目 {self.name} 中的函数文件...")
         for file in os.listdir(self.project_dir):
             if file.endswith('.py') and not file.startswith('_'):
                 function_name = file[:-3]
+                logger.info(f"尝试注册函数: {function_name}")
                 try:
-                    # 使用完整的模块路径
-                    module_path = f"projects.{self.name}.{function_name}"
-                    try:
-                        module = importlib.import_module(module_path)
-                    except ImportError:
-                        # 如果导入失败，尝试使用文件路径加载
-                        spec = importlib.util.spec_from_file_location(
-                            f"{self.name}.{function_name}",
-                            os.path.join(self.project_dir, file)
-                        )
-                        module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(module)
-                    
-                    if hasattr(module, "main"):
-                        # 检查是否有函数描述
-                        if hasattr(module, "FUNCTION_DESCRIPTION"):
-                            logger.info(f"Loaded function {function_name} with description from project {self.name}")
-                        else:
-                            logger.warning(f"Function {function_name} in project {self.name} has no description")
+                    # 读取文件内容
+                    file_path = os.path.join(self.project_dir, file)
+                    with open(file_path, 'r', encoding='utf-8') as f:
+                        content = f.read()
                         
-                        self.function_registry[function_name] = module.main
-                        logger.info(f"Loaded function {function_name} from project {self.name}")
+                    # 检查是否有main函数
+                    if 'def main(' in content:
+                        # 检查是否有函数描述
+                        desc = None
+                        if 'FUNCTION_DESCRIPTION' in content:
+                            try:
+                                # 尝试提取描述
+                                desc_start = content.find('FUNCTION_DESCRIPTION')
+                                desc_end = content.find('\n', desc_start)
+                                if desc_end != -1:
+                                    desc_line = content[desc_start:desc_end].strip()
+                                    desc = desc_line.split('=')[1].strip().strip('"\'')
+                            except Exception as e:
+                                logger.warning(f"提取函数描述失败: {str(e)}")
+                        
+                        if desc:
+                            logger.info(f"注册函数 {function_name} (描述: {desc})")
+                        else:
+                            logger.info(f"注册函数 {function_name} (无描述)")
+                        
+                        # 注册函数信息（不导入）
+                        self.function_registry[function_name] = {
+                            'file_path': file_path,
+                            'module_name': f"{self.name}.{function_name}",
+                            'description': desc,
+                            'loaded': False,
+                            'function': None
+                        }
+                        functions_registered += 1
                     else:
-                        logger.warning(f"Function {function_name} in project {self.name} has no main function")
+                        logger.warning(f"函数 {function_name} 没有main入口点")
                 except Exception as e:
-                    logger.error(f"Error loading function {function_name}: {str(e)}")
+                    logger.error(f"注册函数 {function_name} 失败: {str(e)}", exc_info=True)
+        
+        logger.info(f"项目 {self.name} 注册了 {functions_registered} 个函数")
+
+    def _load_functions(self):
+        """加载项目函数（导入模块）"""
+        # 确保虚拟环境路径在sys.path的最前面
+        if sys.platform == "win32":
+            venv_site_packages = os.path.join(self.venv_dir, "Lib", "site-packages")
+        else:
+            python_version = f"python{sys.version_info.major}.{sys.version_info.minor}"
+            venv_site_packages = os.path.join(self.venv_dir, "lib", python_version, "site-packages")
+        
+        if os.path.exists(venv_site_packages):
+            if venv_site_packages not in sys.path:
+                sys.path.insert(0, venv_site_packages)
+                logger.info(f"已添加虚拟环境路径到sys.path: {venv_site_packages}")
+            else:
+                logger.info(f"虚拟环境路径已在sys.path中: {venv_site_packages}")
+        else:
+            logger.error(f"虚拟环境site-packages路径不存在: {venv_site_packages}")
+            
+        # 确保cloudfunction目录在Python路径中
+        cloudfunction_dir = os.path.dirname(os.path.dirname(os.path.dirname(self.project_dir)))
+        if cloudfunction_dir not in sys.path and os.path.exists(cloudfunction_dir):
+            sys.path.insert(0, cloudfunction_dir)
+            logger.info(f"已添加cloudfunction目录到Python路径: {cloudfunction_dir}")
+            
+        # 确保项目所在目录在Python路径中
+        projects_parent_dir = os.path.dirname(self.project_dir)
+        if projects_parent_dir not in sys.path:
+            sys.path.insert(0, projects_parent_dir)
+            logger.info(f"已添加项目父目录到Python路径: {projects_parent_dir}")
+        
+        # 导入已注册的函数
+        functions_loaded = 0
+        logger.info(f"开始导入项目 {self.name} 的函数...")
+        for function_name, func_info in self.function_registry.items():
+            if not func_info['loaded']:
+                try:
+                    # 导入模块并获取函数对象
+                    module = importlib.import_module(func_info['module_name'])
+                    func = getattr(module, 'main')
+                    if callable(func):
+                        func_info['function'] = func
+                        func_info['loaded'] = True
+                        functions_loaded += 1
+                        logger.info(f"成功导入函数: {function_name}")
+                    else:
+                        logger.error(f"函数 {function_name} 不是可调用对象")
+                except Exception as e:
+                    logger.error(f"导入函数 {function_name} 失败: {str(e)}", exc_info=True)
+        
+        logger.info(f"项目 {self.name} 导入了 {functions_loaded} 个函数")
 
     def run(self):
         """运行项目进程"""
@@ -215,8 +329,23 @@ class ProjectProcess:
             self.loop = asyncio.new_event_loop()
             asyncio.set_event_loop(self.loop)
             
-            # 加载函数
-            self._load_functions()
+            # 如果初始化失败，提前标记事件
+            if not self.initialized:
+                logger.warning(f"项目 {self.name} 初始化失败，无法处理函数请求")
+                self.event.set()  # 设置事件，表示进程已准备好（虽然失败）
+                # 不要立即退出，等待主进程可能的停止命令
+                
+                # 简单消息循环，只处理停止命令
+                while True:
+                    if not self.queue.empty():
+                        message = self.queue.get()
+                        logger.debug(f"收到消息: {message}")
+                        if message == "stop":
+                            logger.info(f"收到停止信号，正在停止项目 {self.name}")
+                            break
+                    time.sleep(1)  # 简单轮询，减少CPU使用
+                
+                return
             
             # 标记进程已准备好
             self.event.set()
@@ -225,10 +354,14 @@ class ProjectProcess:
             self.loop.run_until_complete(self._run_async())
             
         except Exception as e:
-            logger.error(f"项目进程异常退出: {self.name} - {str(e)}")
+            logger.error(f"项目进程异常退出: {self.name} - {str(e)}", exc_info=True)
+            # 确保事件被设置，即使发生错误
+            if not self.event.is_set():
+                self.event.set()
             # 通知主进程
             self.queue.put({
-                "type": "error",
+                "status": "error",
+                "type": "process_error",
                 "error": str(e)
             })
             
@@ -270,77 +403,170 @@ class ProjectProcess:
         
     async def execute_function_async(self, function_name: str, payload: Dict[str, Any]) -> Any:
         """异步执行函数"""
+        if not self.initialized:
+            raise RuntimeError("Project not initialized")
+            
         if function_name not in self.function_registry:
-            raise ValueError(f"Function {function_name} not found in project {self.name}")
-        
+            raise ValueError(f"Function {function_name} not found")
+            
         try:
-            # 获取函数处理器
-            handler = self.function_registry[function_name]
-            
-            # 检查是否是异步函数
-            if asyncio.iscoroutinefunction(handler):
-                # 直接执行异步函数
-                result = await handler(payload)
-            else:
-                # 同步函数在线程池中执行
-                loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    self.executor,
-                    handler,
-                    payload
-                )
+            # 使用线程池执行函数
+            loop = asyncio.get_event_loop()
+            result = await loop.run_in_executor(
+                self.executor,
+                self._execute_function,
+                function_name,
+                payload
+            )
             return result
-            
         except Exception as e:
-            logger.error(f"Error executing function {function_name}: {str(e)}")
+            logger.error(f"函数执行失败: {function_name} - {str(e)}", exc_info=True)
+            raise
+
+    def _execute_function(self, function_name: str, payload: Dict[str, Any]) -> Any:
+        """在线程池中执行函数"""
+        try:
+            # 获取函数信息
+            func_info = self.function_registry.get(function_name)
+            if not func_info:
+                raise ValueError(f"Function {function_name} not found")
+            
+            # 如果函数未加载，尝试加载
+            if not func_info['loaded']:
+                try:
+                    module = importlib.import_module(func_info['module_name'])
+                    func = getattr(module, 'main')
+                    if callable(func):
+                        func_info['function'] = func
+                        func_info['loaded'] = True
+                        logger.info(f"成功导入函数: {function_name}")
+                    else:
+                        raise ValueError(f"Function {function_name} is not callable")
+                except Exception as e:
+                    logger.error(f"导入函数 {function_name} 失败: {str(e)}", exc_info=True)
+                    raise
+            
+            # 获取函数对象
+            func = func_info['function']
+            
+            # 执行函数
+            if asyncio.iscoroutinefunction(func):
+                # 如果是异步函数，创建新的事件循环
+                loop = asyncio.new_event_loop()
+                asyncio.set_event_loop(loop)
+                try:
+                    result = loop.run_until_complete(func(payload))
+                finally:
+                    loop.close()
+            else:
+                # 如果是同步函数，直接执行
+                result = func(payload)
+                
+            return result
+        except Exception as e:
+            logger.error(f"函数执行失败: {function_name} - {str(e)}", exc_info=True)
             raise
 
 class ProjectManager:
-    def __init__(self):
+    """项目管理器"""
+    
+    def __init__(self, state=None):
+        """初始化项目管理器
+        
+        Args:
+            state: 服务器状态对象，可选
+        """
+        self.state = state
         self.projects = {}
-        self.env_manager = EnvManager()
-
+        
     async def start_project(self, project_name: str) -> bool:
-        """启动项目"""
-        if project_name in self.projects:
-            logger.warning(f"Project {project_name} is already running")
-            return False
+        """启动项目
         
+        Args:
+            project_name: 项目名称
+            
+        Returns:
+            bool: 是否成功启动
+        """
         try:
-            project = ProjectProcess(project_name)
-            self.projects[project_name] = project
-            logger.info(f"Started project {project_name}")
+            # 延迟导入，避免循环依赖
+            from .master import get_master
+            master = get_master()
+            if not master:
+                raise Exception("无法获取主进程实例")
+                
+            # 启动项目进程
+            master._start_project_process(project_name)
             return True
+            
         except Exception as e:
-            logger.error(f"Error starting project {project_name}: {str(e)}")
+            logger.error(f"启动项目失败: {str(e)}")
             return False
-
+            
     async def stop_project(self, project_name: str) -> bool:
-        """停止项目"""
-        if project_name not in self.projects:
-            logger.warning(f"Project {project_name} is not running")
-            return False
+        """停止项目
         
+        Args:
+            project_name: 项目名称
+            
+        Returns:
+            bool: 是否成功停止
+        """
         try:
-            del self.projects[project_name]
-            self.env_manager.clear_project_env(project_name)
-            logger.info(f"Stopped project {project_name}")
+            # 延迟导入，避免循环依赖
+            from .master import get_master
+            master = get_master()
+            if not master:
+                raise Exception("无法获取主进程实例")
+                
+            # 停止项目进程
+            master._stop_project_process(project_name)
             return True
+            
         except Exception as e:
-            logger.error(f"Error stopping project {project_name}: {str(e)}")
+            logger.error(f"停止项目失败: {str(e)}")
             return False
-
+            
     async def execute_function(self, project_name: str, function_name: str, payload: Dict[str, Any]) -> Any:
-        """执行项目函数"""
-        if project_name not in self.projects:
-            raise ValueError(f"Project {project_name} is not running")
+        """执行函数
         
-        return await self.projects[project_name].execute_function_async(function_name, payload)
-
+        Args:
+            project_name: 项目名称
+            function_name: 函数名称
+            payload: 函数参数
+            
+        Returns:
+            函数执行结果
+        """
+        try:
+            # 延迟导入，避免循环依赖
+            from .master import get_master
+            master = get_master()
+            if not master:
+                raise Exception("无法获取主进程实例")
+                
+            # 执行函数
+            return await master.execute_function(project_name, function_name, payload)
+            
+        except Exception as e:
+            logger.error(f"执行函数失败: {str(e)}")
+            raise
+            
     def get_project(self, project_name: str) -> Optional[ProjectProcess]:
-        """获取项目实例"""
+        """获取项目实例
+        
+        Args:
+            project_name: 项目名称
+            
+        Returns:
+            ProjectProcess: 项目实例，如果不存在返回None
+        """
         return self.projects.get(project_name)
-
+        
     def list_projects(self) -> list:
-        """列出所有运行中的项目"""
+        """获取项目列表
+        
+        Returns:
+            list: 项目列表
+        """
         return list(self.projects.keys()) 

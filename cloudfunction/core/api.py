@@ -1,9 +1,10 @@
 from fastapi import APIRouter, HTTPException, Request
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from cloudfunction.utils.logger import get_logger
 from cloudfunction.core.executor import FunctionExecutor
 import os
 from cloudfunction.core.registry import FunctionRegistry
+import datetime
 
 logger = get_logger(__name__)
 
@@ -19,9 +20,35 @@ async def root():
     }
 
 @router.get("/health")
-async def health_check():
-    """健康检查"""
-    return {"status": "healthy"}
+async def health_check(request: Request):
+    """健康检查
+    
+    返回系统的基本健康状态，包括：
+    - 服务状态
+    - 主进程状态
+    - 项目状态
+    """
+    try:
+        # 获取主进程状态
+        master = request.app.state.get_master()
+        
+        # 获取项目状态
+        registry = request.app.state.get_registry()
+        projects = registry.list_projects() if registry else []
+        
+        return {
+            "status": "healthy",
+            "master": master is not None,
+            "projects": len(projects),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
+    except Exception as e:
+        logger.error(f"健康检查失败: {str(e)}", exc_info=True)
+        return {
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.datetime.now().isoformat()
+        }
 
 def get_project_files(project_name: str, function_name: str = None) -> Dict[str, List[bytes]]:
     """
@@ -70,18 +97,15 @@ async def deploy_project(project_name: str, request: Request):
         project_name: 项目名称
         request: 请求对象
     """
-    logger.info(f"收到项目部署请求: project={project_name}")
+    logger.info(f"收到项目部署请求: {project_name}")
     try:
-        # 验证项目文件存在性（不指定function_name，将检查所有.py文件）
-        get_project_files(project_name)
-        
         # 获取执行器
         executor = request.app.state.get_executor(project_name)
         logger.debug(f"获取到执行器: {executor}")
         
-        # 部署整个项目
+        # 部署项目
         result = await executor.deploy_project(project_name)
-        logger.info(f"项目部署成功: {result}")
+        logger.info(f"项目部署完成: {result}")
         return result
         
     except Exception as e:
@@ -129,7 +153,7 @@ async def invoke_function_api(
     function_name: str,
     request: Request
 ):
-    """调用特定函数
+    """调用函数（异步）
     
     Args:
         project_name: 项目名称
@@ -141,27 +165,22 @@ async def invoke_function_api(
         # 获取请求体
         payload = await request.json()
         
-        # 获取执行器
-        executor = request.app.state.get_executor(project_name)
-        if not executor:
-            # 如果执行器不存在，创建新的执行器
-            registry = request.app.state.registry
-            if not registry:
-                raise HTTPException(
-                    status_code=500,
-                    detail="Registry not initialized"
-                )
-            executor = FunctionExecutor(project_name, registry)
+        # 获取任务管理器
+        task_manager = request.app.state.get_task_manager()
+        if not task_manager:
+            raise HTTPException(
+                status_code=500,
+                detail="Task manager not initialized"
+            )
             
-        logger.debug(f"获取到执行器: {executor}")
-        
-        # 调用函数
-        result = await executor.execute(function_name, payload)
-        if result["status"] == "error":
-            raise HTTPException(status_code=500, detail=result["error"])
-            
-        logger.info(f"函数调用成功: {result}")
-        return result
+        # 创建任务
+        task_info = await task_manager.create_task(project_name, function_name, payload)
+        logger.info(f"任务创建成功: {task_info['task_id']}")
+        return {
+            "status": "success",
+            "task_id": task_info["task_id"],
+            "message": "Task created successfully"
+        }
         
     except Exception as e:
         logger.error(f"函数调用失败: {str(e)}")
@@ -229,6 +248,234 @@ async def delete_project(project_name: str, request: Request):
         
     except Exception as e:
         logger.error(f"项目删除失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/api/v1/tasks/{task_id}")
+async def get_task_status(task_id: str, request: Request):
+    """获取任务状态
+    
+    Args:
+        task_id: 任务ID
+        request: 请求对象
+    """
+    logger.info(f"收到任务状态查询请求: task_id={task_id}")
+    try:
+        # 获取任务管理器
+        task_manager = request.app.state.get_task_manager()
+        if not task_manager:
+            raise HTTPException(
+                status_code=500,
+                detail="Task manager not initialized"
+            )
+            
+        # 获取任务状态
+        task_info = await task_manager.get_task_status(task_id)
+        if not task_info:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task {task_id} not found"
+            )
+            
+        return task_info
+        
+    except Exception as e:
+        logger.error(f"获取任务状态失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/api/v1/tasks")
+async def list_tasks(request: Request, status: Optional[str] = None):
+    """获取任务列表
+    
+    Args:
+        request: 请求对象
+        status: 可选的过滤状态
+    """
+    logger.info(f"收到任务列表请求: status={status}")
+    try:
+        # 获取任务管理器
+        task_manager = request.app.state.get_task_manager()
+        if not task_manager:
+            raise HTTPException(
+                status_code=500,
+                detail="Task manager not initialized"
+            )
+            
+        # 获取任务列表
+        tasks = await task_manager.list_tasks(status)
+        return tasks
+        
+    except Exception as e:
+        logger.error(f"获取任务列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/api/v1/tasks/{task_id}")
+async def cancel_task(task_id: str, request: Request):
+    """取消任务
+    
+    Args:
+        task_id: 任务ID
+        request: 请求对象
+    """
+    logger.info(f"收到任务取消请求: task_id={task_id}")
+    try:
+        # 获取任务管理器
+        task_manager = request.app.state.get_task_manager()
+        if not task_manager:
+            raise HTTPException(
+                status_code=500,
+                detail="Task manager not initialized"
+            )
+            
+        # 取消任务
+        success = await task_manager.cancel_task(task_id)
+        if not success:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task {task_id} not found or cannot be cancelled"
+            )
+            
+        return {"message": f"Task {task_id} cancelled successfully"}
+        
+    except Exception as e:
+        logger.error(f"取消任务失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/api/v1/functions/{project_name}/{function_name}/tasks")
+async def list_function_tasks(
+    project_name: str,
+    function_name: str,
+    request: Request,
+    status: Optional[str] = None
+):
+    """获取特定函数的所有任务
+    
+    Args:
+        project_name: 项目名称
+        function_name: 函数名称
+        request: 请求对象
+        status: 可选的过滤状态
+    """
+    logger.info(f"收到函数任务列表请求: project={project_name}, function={function_name}")
+    try:
+        # 获取任务管理器
+        task_manager = request.app.state.get_task_manager()
+        if not task_manager:
+            raise HTTPException(
+                status_code=500,
+                detail="Task manager not initialized"
+            )
+            
+        # 获取任务列表
+        tasks = await task_manager.list_tasks(status)
+        # 过滤特定函数的任务
+        function_tasks = [
+            task for task in tasks 
+            if task["project_name"] == project_name and task["function_name"] == function_name
+        ]
+        return function_tasks
+        
+    except Exception as e:
+        logger.error(f"获取函数任务列表失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.get("/api/v1/functions/{project_name}/{function_name}/tasks/{task_id}")
+async def get_function_task(
+    project_name: str,
+    function_name: str,
+    task_id: str,
+    request: Request
+):
+    """获取特定函数的任务状态
+    
+    Args:
+        project_name: 项目名称
+        function_name: 函数名称
+        task_id: 任务ID
+        request: 请求对象
+    """
+    logger.info(f"收到函数任务状态查询请求: project={project_name}, function={function_name}, task_id={task_id}")
+    try:
+        # 获取任务管理器
+        task_manager = request.app.state.get_task_manager()
+        if not task_manager:
+            raise HTTPException(
+                status_code=500,
+                detail="Task manager not initialized"
+            )
+            
+        # 获取任务状态
+        task_info = await task_manager.get_task_status(task_id)
+        if not task_info:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task {task_id} not found"
+            )
+            
+        # 验证任务是否属于指定的函数
+        if task_info["project_name"] != project_name or task_info["function_name"] != function_name:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task {task_id} does not belong to function {function_name}"
+            )
+            
+        return task_info
+        
+    except Exception as e:
+        logger.error(f"获取函数任务状态失败: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@router.delete("/api/v1/functions/{project_name}/{function_name}/tasks/{task_id}")
+async def cancel_function_task(
+    project_name: str,
+    function_name: str,
+    task_id: str,
+    request: Request
+):
+    """取消特定函数的任务
+    
+    Args:
+        project_name: 项目名称
+        function_name: 函数名称
+        task_id: 任务ID
+        request: 请求对象
+    """
+    logger.info(f"收到函数任务取消请求: project={project_name}, function={function_name}, task_id={task_id}")
+    try:
+        # 获取任务管理器
+        task_manager = request.app.state.get_task_manager()
+        if not task_manager:
+            raise HTTPException(
+                status_code=500,
+                detail="Task manager not initialized"
+            )
+            
+        # 获取任务状态
+        task_info = await task_manager.get_task_status(task_id)
+        if not task_info:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task {task_id} not found"
+            )
+            
+        # 验证任务是否属于指定的函数
+        if task_info["project_name"] != project_name or task_info["function_name"] != function_name:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Task {task_id} does not belong to function {function_name}"
+            )
+            
+        # 取消任务
+        success = await task_manager.cancel_task(task_id)
+        if not success:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Task {task_id} cannot be cancelled"
+            )
+            
+        return {"message": f"Task {task_id} cancelled successfully"}
+        
+    except Exception as e:
+        logger.error(f"取消函数任务失败: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
 
 logger.info("API路由设置完成") 

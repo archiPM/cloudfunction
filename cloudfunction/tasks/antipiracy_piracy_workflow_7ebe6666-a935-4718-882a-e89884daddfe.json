@@ -1,0 +1,40 @@
+{
+  "task_id": "antipiracy_piracy_workflow_7ebe6666-a935-4718-882a-e89884daddfe",
+  "project_name": "antipiracy",
+  "function_name": "piracy_workflow",
+  "payload": {
+    "test_mode": true
+  },
+  "status": "completed",
+  "created_at": "2025-05-26T15:28:12.224229",
+  "updated_at": "2025-05-26T15:28:41.897609",
+  "result": {
+    "status": "success",
+    "message": "发现 6 个盗版网站",
+    "piracy_sites": [
+      {
+        "domain": "58xs.co"
+      },
+      {
+        "domain": "3qdus.com"
+      },
+      {
+        "domain": "paozw.org"
+      },
+      {
+        "domain": "92yanqing.com"
+      },
+      {
+        "domain": "ztwx.org"
+      },
+      {
+        "domain": "3qdu.com"
+      }
+    ],
+    "total_time": "26.66秒",
+    "processed_works": 1,
+    "total_works": 1,
+    "test_mode": true
+  },
+  "error": null
+}
