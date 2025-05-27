@@ -1,0 +1,17 @@
+{
+  "task_id": "antipiracy_piracy_workflow_ce3a23ef-78c3-485a-bb1e-02e724f413c5",
+  "project_name": "antipiracy",
+  "function_name": "piracy_workflow",
+  "payload": {
+    "test_mode": true
+  },
+  "status": "completed",
+  "created_at": "2025-05-23T18:54:11.128925",
+  "updated_at": "2025-05-23T18:54:26.692627",
+  "result": {
+    "status": "error",
+    "error": "'domain'",
+    "test_mode": true
+  },
+  "error": null
+}

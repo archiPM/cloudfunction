@@ -21,6 +21,7 @@ from cloudfunction.config.server import (
 # 核心组件
 from .state import ServerState
 from cloudfunction.core.registry import FunctionRegistry
+from cloudfunction.core.env import PROJECTS_DIR
 
 # 设置日志
 logger = get_logger(__name__)
@@ -28,67 +29,41 @@ logger = get_logger(__name__)
 class APIServer:
     """API服务器"""
     
-    def __init__(self, master=None):
-        """初始化API服务器
+    def __init__(self, state: ServerState):
+        self.state = state
+        self.project_manager = self.state.get_project_manager()
+        self.master = self.state.get_master()
         
-        Args:
-            master: 主进程管理器实例，可选
-        """
-        self._init_components(master)
-        self._setup_middleware()
-        self._setup_routes()
+        # 创建并注册 registry 组件
+        registry = FunctionRegistry(projects_dir=PROJECTS_DIR)
+        self.state.register_component('registry', registry)
         
-    def _init_components(self, master):
-        """初始化组件"""
-        logger.info("初始化API服务器组件")
-        self.app = FastAPI(title="Cloud Function API")
-        self.master = master
-        self.state = master.state if master else ServerState()
-        self.executors = {}  # 项目名称 -> FunctionExecutor
-        logger.info("API服务器组件初始化完成")
-
-    def _setup_middleware(self):
-        """设置中间件"""
-        logger.info("设置中间件")
-        
-        # 添加CORS中间件
-        self.app.add_middleware(
-            CORSMiddleware,
-            allow_origins=["*"],
-            allow_credentials=True,
-            allow_methods=["*"],
-            allow_headers=["*"],
+        # 创建 FastAPI 应用
+        self.app = FastAPI(
+            title="Cloud Function API",
+            description="Cloud Function API Server",
+            version="1.0.0"
         )
         
-        # 添加可信主机中间件
-        self.app.add_middleware(TrustedHostMiddleware, allowed_hosts=["*"])
+        # 注册路由
+        self._register_routes()
         
-        # 添加请求日志中间件
-        @self.app.middleware("http")
-        async def log_requests(request: Request, call_next):
-            logger.info(f"收到请求: {request.method} {request.url.path}")
-            logger.debug(f"请求头: {dict(request.headers)}")
-            
-            try:
-                response = await call_next(request)
-                logger.info(f"请求处理完成: {request.method} {request.url.path} - 状态码: {response.status_code}")
-                return response
-            except Exception as e:
-                logger.error(f"请求处理异常: {request.method} {request.url.path} - 错误: {str(e)}")
-                raise
-                
-        logger.info("中间件设置完成")
+        # 创建 uvicorn 配置
+        self.config = uvicorn.Config(
+            self.app,
+            host=HOST,
+            port=PORT,
+            log_level="info"
+        )
 
-    def _setup_routes(self):
-        """设置路由"""
+    def _register_routes(self):
+        """注册路由"""
         # 将state的方法添加到app.state中，供路由使用
         self.app.state.get_executor = self.state.get_executor
         self.app.state.get_registry = self.state.get_registry
-        
-        # 健康检查
-        @self.app.get("/health")
-        async def health_check():
-            return {"status": "healthy"}
+        self.app.state.get_master = self.state.get_master
+        self.app.state.get_project_manager = self.state.get_project_manager
+        self.app.state.get_task_manager = self.state.get_task_manager
         
         # 导入并注册 API 路由
         from .api import router as api_router
@@ -96,25 +71,50 @@ class APIServer:
         
     async def start(self, host: str = HOST, port: int = PORT):
         """启动API服务器"""
-        logger.info(f"正在启动API服务器 {host}:{port}")
-        logger.info(f"服务器配置: workers={WORKERS}, backlog={BACKLOG}")
-        
-        config = uvicorn.Config(
-            self.app,
-            host=host,
-            port=port,
-            workers=WORKERS,
-            backlog=BACKLOG,
-            timeout_keep_alive=TIMEOUT_KEEP_ALIVE,
-            timeout_graceful_shutdown=TIMEOUT_GRACEFUL_SHUTDOWN,
-            log_level=LOG_LEVEL.lower(),  # 转换为小写
-            access_log=ACCESS_LOG
-        )
-        server = uvicorn.Server(config)
-        logger.info("服务器配置完成,开始监听请求")
-        await server.serve()
+        try:
+            self.state._log_operation('info', 'api_server', 'start', f'正在启动服务器 {host}:{port}')
+            self.state._log_operation('info', 'api_server', 'start', f'服务器配置: workers={WORKERS}, backlog={BACKLOG}')
+            
+            config = uvicorn.Config(
+                self.app,
+                host=host,
+                port=port,
+                workers=1,  # 确保只有一个worker
+                backlog=BACKLOG,
+                timeout_keep_alive=TIMEOUT_KEEP_ALIVE,
+                timeout_graceful_shutdown=TIMEOUT_GRACEFUL_SHUTDOWN,
+                log_level=LOG_LEVEL.lower(),
+                access_log=ACCESS_LOG
+            )
+            server = uvicorn.Server(config)
+            self.state._log_operation('info', 'api_server', 'start', '服务器配置完成,开始监听请求')
+            await server.serve()
+            
+        except Exception as e:
+            self.state._handle_error('api_server', 'start', e)
+            raise
 
     def run(self, host: str = HOST, port: int = PORT):
         """运行API服务器（用于进程启动）"""
-        asyncio.run(self.start(host, port))
+        try:
+            self.state._log_operation('info', 'api_server', 'run', f'正在启动服务器 {host}:{port}')
+            
+            config = uvicorn.Config(
+                self.app,
+                host=host,
+                port=port,
+                workers=1,  # 确保只有一个worker
+                backlog=BACKLOG,
+                timeout_keep_alive=TIMEOUT_KEEP_ALIVE,
+                timeout_graceful_shutdown=TIMEOUT_GRACEFUL_SHUTDOWN,
+                log_level=LOG_LEVEL.lower(),
+                access_log=ACCESS_LOG
+            )
+            server = uvicorn.Server(config)
+            self.state._log_operation('info', 'api_server', 'run', '服务器配置完成,开始运行')
+            server.run()
+            
+        except Exception as e:
+            self.state._handle_error('api_server', 'run', e)
+            raise
 
