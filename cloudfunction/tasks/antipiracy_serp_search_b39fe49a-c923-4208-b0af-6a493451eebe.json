@@ -1,0 +1,23 @@
+{
+  "task_id": "antipiracy_serp_search_b39fe49a-c923-4208-b0af-6a493451eebe",
+  "project_name": "antipiracy",
+  "function_name": "serp_search",
+  "payload": {
+    "query": "装腔启示录",
+    "max_pages": 1,
+    "results_per_page": 10,
+    "sleep": 2
+  },
+  "status": "completed",
+  "created_at": "2025-05-27T18:57:55.062191",
+  "updated_at": "2025-05-27T18:57:59.047349",
+  "result": {
+    "status": "success",
+    "data": {
+      "engine": "baidu",
+      "query": "装腔启示录",
+      "results": []
+    }
+  },
+  "error": null
+}

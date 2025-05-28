@@ -8,6 +8,8 @@ import os
 import sys
 import logging
 from cloudfunction.utils.logger import setup_logging, get_logger
+from cloudfunction.core.task_manager import TaskManager
+from cloudfunction.core.state import ServerState
 
 logger = get_logger(__name__)
 
@@ -26,6 +28,13 @@ async def main():
         
         # 创建主进程管理器
         master = Master()
+        
+        # 初始化状态中心
+        state = ServerState()
+        
+        # 初始化任务管理器（同时处理普通任务和定时任务）
+        task_manager = TaskManager(state)
+        task_manager.start()
         
         # 启动服务
         await master.start()

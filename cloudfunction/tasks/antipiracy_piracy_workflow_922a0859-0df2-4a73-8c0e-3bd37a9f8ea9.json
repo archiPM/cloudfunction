@@ -1,0 +1,18 @@
+{
+  "task_id": "antipiracy_piracy_workflow_922a0859-0df2-4a73-8c0e-3bd37a9f8ea9",
+  "project_name": "antipiracy",
+  "function_name": "piracy_workflow",
+  "payload": {},
+  "status": "completed",
+  "created_at": "2025-05-27T19:07:42.586591",
+  "updated_at": "2025-05-27T19:17:48.046732",
+  "result": {
+    "status": "success",
+    "message": "未发现盗版网站",
+    "total_time": "605.46秒",
+    "processed_works": 41,
+    "total_works": 41,
+    "test_mode": false
+  },
+  "error": null
+}
