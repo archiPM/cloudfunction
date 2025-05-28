@@ -66,6 +66,27 @@ else
     echo "$(date '+%Y-%m-%d %H:%M:%S %Z') - 项目日志目录已存在，跳过创建" >> "$LOG_FILE"
 fi
 
+# 检查并创建配置目录
+if [ ! -d "cloudfunction/config" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S %Z') - 创建配置目录..." >> "$LOG_FILE"
+    mkdir -p cloudfunction/config
+else
+    echo "$(date '+%Y-%m-%d %H:%M:%S %Z') - 配置目录已存在，跳过创建" >> "$LOG_FILE"
+fi
+
+# 检查调度器配置文件
+if [ ! -f "cloudfunction/config/scheduler_config.yaml" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S %Z') - 警告：调度器配置文件不存在" >> "$LOG_FILE"
+fi
+
+# 检查并创建任务目录
+if [ ! -d "cloudfunction/tasks" ]; then
+    echo "$(date '+%Y-%m-%d %H:%M:%S %Z') - 创建任务目录..." >> "$LOG_FILE"
+    mkdir -p cloudfunction/tasks
+else
+    echo "$(date '+%Y-%m-%d %H:%M:%S %Z') - 任务目录已存在，跳过创建" >> "$LOG_FILE"
+fi
+
 # 设置权限
 echo "$(date '+%Y-%m-%d %H:%M:%S %Z') - 设置文件权限..." >> "$LOG_FILE"
 

@@ -1,0 +1,40 @@
+# 定时任务配置
+tasks:
+  # 系统级任务
+  system:
+    cleanup_tasks:
+      type: system
+      function: cleanup_old_tasks
+      args: [7]  # 清理7天前的文件
+      schedule:
+        type: cron
+        day_of_week: mon
+        hour: 8
+        minute: 0
+
+  # 项目级任务
+  projects:
+    antipiracy:
+      piracy_workflow:
+        type: project
+        project: antipiracy
+        function: piracy_workflow
+        args: {}
+        schedule:
+          type: cron
+          day_of_week: mon
+          hour: 8
+          minute: 30
+          week: "*/4"  # 每4周执行一次
+
+      search_piracy_website:
+        type: project
+        project: antipiracy
+        function: search_piracy_website
+        args: {}
+        schedule:
+          type: cron
+          day_of_week: mon
+          hour: 9
+          minute: 0
+          week: "*/4"  # 每4周执行一次 

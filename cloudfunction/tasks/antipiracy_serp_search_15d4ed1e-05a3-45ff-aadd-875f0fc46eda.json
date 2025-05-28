@@ -1,0 +1,60 @@
+{
+  "task_id": "antipiracy_serp_search_15d4ed1e-05a3-45ff-aadd-875f0fc46eda",
+  "project_name": "antipiracy",
+  "function_name": "serp_search",
+  "payload": {
+    "query": "装腔启示录",
+    "max_pages": 1,
+    "results_per_page": 10,
+    "sleep": 2
+  },
+  "status": "completed",
+  "created_at": "2025-05-27T19:03:19.337552",
+  "updated_at": "2025-05-27T19:03:31.461850",
+  "result": {
+    "status": "success",
+    "data": {
+      "engine": "baidu",
+      "query": "装腔启示录",
+      "results": [
+        {
+          "position": 1,
+          "title": "在线播放《装腔启示录》 第1集-装腔启示录国产剧 - 策驰影院",
+          "link": "http://m.masedu.cn/bobo_94772-2-1.html",
+          "displayed_link": "m.masedu.cn/bobo_94772-2...html",
+          "snippet": "导演:"
+        },
+        {
+          "position": 2,
+          "title": "《装腔启示录》全集高清在线观看_装腔启示录免费观看_装腔启示录...",
+          "link": "https://www.6789ys.com/vod/33078.html",
+          "displayed_link": "www.6789ys.com/vod/330...html",
+          "snippet": "导演:",
+          "thumbnail": "https://gips2.baidu.com/it/u=3962133316,1604637168&fm=3026&app=3026&size=r3,4&q=75&n=0&g=4n&f=JPEG&fmt=auto&maxorilen2heic=2000000?s=15B17B9763A7FCEE04191CF603005030"
+        },
+        {
+          "position": 3,
+          "title": "装腔启示录(第01集)",
+          "link": "http://www.75ju.com/play/287292-1-1.html",
+          "displayed_link": "www.75ju.com/play/287292-1...html",
+          "snippet": "导演:"
+        },
+        {
+          "position": 4,
+          "title": "《装腔启示录》第1集-电视剧完整版在线观看-6080电影天堂",
+          "link": "http://www.bjhkm.com/guocanju/zhuangqiangqishilu/2-1.html",
+          "displayed_link": "www.bjhkm.com/guocanju/zhuangqiangqi...",
+          "snippet": "导演:"
+        },
+        {
+          "position": 5,
+          "title": "装腔启示录第01集_第01集",
+          "link": "https://www.sxsscq.com/gsxw/20740-1-0.html",
+          "displayed_link": "太原盛世传崎环保科技有限公司",
+          "snippet": "导演:"
+        }
+      ]
+    }
+  },
+  "error": null
+}
